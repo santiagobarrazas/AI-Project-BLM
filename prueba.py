@@ -18,7 +18,7 @@ pose = mp_pose.Pose(
 )
 
 # Initialize the camera
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 # Store previous frame's values
 prev_values = None
