@@ -18,7 +18,7 @@ pose = mp_pose.Pose(
 )
 
 # Initialize the camera
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 # Store previous frame's values
 prev_values = None
@@ -34,7 +34,7 @@ feature_columns = [
     'vertical_displacement', 'vertical_velocity', 'body_rotation',
     'vertical_displacement_rolling_mean', 'vertical_displacement_rolling_std',
     'body_rotation_rolling_mean', 'body_rotation_rolling_std',
-    'step_length_rolling_mean', 'step_length_rolling_std'
+    'step_length_rolling_mean', 'step_length_rolling_std', 'hand_distance_x'
 ]
 
 def calculate_angle(p1, p2, p3):
@@ -110,7 +110,8 @@ def extract_features(landmarks, prev_values, frame_time=0.033):
             'vertical_displacement': 0, 'vertical_velocity': 0,
             'vertical_displacement_rolling_mean': 0, 'vertical_displacement_rolling_std': 0,
             'body_rotation_rolling_mean': features['body_rotation'], 'body_rotation_rolling_std': 0,
-            'step_length_rolling_mean': features['step_length'], 'step_length_rolling_std': 0
+            'step_length_rolling_mean': features['step_length'], 'step_length_rolling_std': 0,
+            'hand_distance_x': 0,
         })
     else:
         # Calculate velocities and accelerations
@@ -122,6 +123,8 @@ def extract_features(landmarks, prev_values, frame_time=0.033):
         # Calculate center accelerations using the newly calculated velocities
         features['center_acceleration_x'] = (features['center_velocity_x'] - prev_values.get('center_velocity_x', 0)) / frame_time
         features['center_acceleration_y'] = (features['center_velocity_y'] - prev_values.get('center_velocity_y', 0)) / frame_time
+
+        features['hand_distance_x'] = points['RIGHT_WRIST'][0] - points['LEFT_WRIST'][0]
 
         # Calculate remaining features
         features.update({
