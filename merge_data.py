@@ -2,7 +2,7 @@ import os
 import pandas as pd
 
 # Folder containing the CSV files
-folder_path = 'normalized_output'
+folder_path = 'labeled_output'
 
 # List to store processed DataFrames
 dataframes = []

@@ -3,175 +3,247 @@ import mediapipe as mp
 import numpy as np
 import pickle
 import pandas as pd
-import math
 
-# Cargar el modelo entrenado desde el archivo .pkl
-with open('modelo_xgboost.pkl', 'rb') as f:
+# Load the trained model and scaler
+with open('xgboost_model.pkl', 'rb') as f:
     model = pickle.load(f)
+with open('scaler.pkl', 'rb') as f:
+    scaler = pickle.load(f)
 
-# Inicializar MediaPipe Pose
+# Initialize MediaPipe Pose
 mp_pose = mp.solutions.pose
-pose = mp_pose.Pose()
+pose = mp_pose.Pose(
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
-# Inicializar la cámara
+# Initialize the camera
 cap = cv2.VideoCapture(1)
 
-# Para almacenar el frame anterior y calcular los deltas
+# Store previous frame's values
 prev_values = None
 
-# Definir las columnas de las características (con los ángulos y las posiciones de caderas)
-columnas_relevantes = [
-    'LEFT_HIP_x', 'LEFT_HIP_y',
-    'RIGHT_HIP_x', 'RIGHT_HIP_y','shoulder_distance', 'hip_distance',
-    'LEFT_KNEE_ANGLE', 'RIGHT_KNEE_ANGLE',
+# Define feature columns (matching the training script)
+feature_columns = [
+    'LEFT_KNEE_ANGLE', 'RIGHT_KNEE_ANGLE', 'LEFT_HIP_ANGLE', 'RIGHT_HIP_ANGLE',
+    'shoulder_distance', 'hip_distance', 'knee_distance', 'ankle_distance',
+    'center_velocity_x', 'center_velocity_y', 'center_acceleration_x', 'center_acceleration_y',
+    'LEFT_KNEE_ANGLE_velocity', 'RIGHT_KNEE_ANGLE_velocity',
+    'LEFT_HIP_ANGLE_velocity', 'RIGHT_HIP_ANGLE_velocity',
+    'step_length', 'body_height_left', 'body_height_right',
+    'vertical_displacement', 'vertical_velocity', 'body_rotation',
+    'vertical_displacement_rolling_mean', 'vertical_displacement_rolling_std',
+    'body_rotation_rolling_mean', 'body_rotation_rolling_std',
+    'step_length_rolling_mean', 'step_length_rolling_std'
 ]
 
-# Función para calcular el ángulo entre tres puntos
-def calculate_angle(a, b, c):
-    # A, B, C son puntos (x, y)
-    ax, ay = a
-    bx, by = b
-    cx, cy = c
-    
-    # Calcular las distancias
-    ab = np.sqrt((bx - ax) ** 2 + (by - ay) ** 2)
-    bc = np.sqrt((cx - bx) ** 2 + (cy - by) ** 2)
-    ac = np.sqrt((cx - ax) ** 2 + (cy - ay) ** 2)
+def calculate_angle(p1, p2, p3):
+    """Calculate angle between three points."""
+    v1 = np.array(p1) - np.array(p2)
+    v2 = np.array(p3) - np.array(p2)
+    dot_product = np.dot(v1, v2)
+    magnitude_v1 = np.linalg.norm(v1)
+    magnitude_v2 = np.linalg.norm(v2)
+    if magnitude_v1 == 0 or magnitude_v2 == 0:
+        return 0
+    angle_radians = np.arccos(np.clip(dot_product / (magnitude_v1 * magnitude_v2), -1.0, 1.0))
+    return np.degrees(angle_radians)
 
-    # Calcular el coseno del ángulo utilizando la ley de cosenos
-    cos_angle = (ab**2 + bc**2 - ac**2) / (2 * ab * bc)
-    angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))  # Restringir valores a [-1, 1] para evitar errores numéricos
-    return np.degrees(angle)
+def calculate_distance(p1, p2):
+    """Calculate Euclidean distance between two points."""
+    return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
-# Función para calcular los deltas entre frames (solo para las posiciones)
-def calcular_deltas(current_values, prev_values):
-    deltas = []
-    if prev_values is not None:
-        for current, prev in zip(current_values, prev_values):
-            deltas.append(current - prev)
-    else:
-        deltas = current_values  # Si no hay frame anterior, solo toma las posiciones actuales
-    return deltas
+def extract_features(landmarks, prev_values, frame_time=0.033):
+    """Extract all features from landmarks."""
+    # Extract coordinates
+    points = {}
+    for name in [
+        'LEFT_SHOULDER', 'RIGHT_SHOULDER',
+        'LEFT_HIP', 'RIGHT_HIP',
+        'LEFT_KNEE', 'RIGHT_KNEE',
+        'LEFT_ANKLE', 'RIGHT_ANKLE',
+        'LEFT_ELBOW', 'RIGHT_ELBOW',
+        'LEFT_WRIST', 'RIGHT_WRIST'
+    ]:
+        landmark = landmarks[getattr(mp_pose.PoseLandmark, name)]
+        points[name] = (landmark.x, landmark.y)
 
-# Función para calcular la distancia entre los hombros
-def calcular_distance(landmarks, left, right):
-    left = landmarks[left]
-    right = landmarks[right]
-    
-    x_diff = left.x - right.x
-    y_diff = left.y - right.y
-    return np.sqrt(x_diff**2 + y_diff**2)
-
-# Función para calcular las posiciones y los ángulos relevantes
-def calcular_posiciones_y_angulos(landmarks):
-    # Coordenadas de las caderas
-    left_hip = landmarks[mp_pose.PoseLandmark.LEFT_HIP]
-    right_hip = landmarks[mp_pose.PoseLandmark.RIGHT_HIP]
-    
-    # Coordenadas de las rodillas
-    left_knee = landmarks[mp_pose.PoseLandmark.LEFT_KNEE]
-    right_knee = landmarks[mp_pose.PoseLandmark.RIGHT_KNEE]
-
-    # Coordenadas de los tobillos (usados para calcular el ángulo de la rodilla)
-    left_ankle = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE]
-    right_ankle = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE]
-
-    # Calcular ángulos de las rodillas
-    left_knee_angle = calculate_angle(
-        (left_hip.x, left_hip.y), (left_knee.x, left_knee.y), (left_ankle.x, left_ankle.y)
-    )
-    right_knee_angle = calculate_angle(
-        (right_hip.x, right_hip.y), (right_knee.x, right_knee.y), (right_ankle.x, right_ankle.y)
-    )
-
-    # Distancia entre los hombros
-    shoulder_distance = calcular_distance(landmarks, mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER)
-    hip_distance = calcular_distance(landmarks, mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP)
-    
-    return {
-        "LEFT_HIP_x": left_hip.x, "LEFT_HIP_y": left_hip.y,
-        "RIGHT_HIP_x": right_hip.x, "RIGHT_HIP_y": right_hip.y,
-        "LEFT_KNEE_ANGLE": left_knee_angle, "RIGHT_KNEE_ANGLE": right_knee_angle,
-        "shoulder_distance": shoulder_distance, "hip_distance": hip_distance,
+    # Calculate joint angles
+    features = {
+        'LEFT_KNEE_ANGLE': calculate_angle(points['LEFT_HIP'], points['LEFT_KNEE'], points['LEFT_ANKLE']),
+        'RIGHT_KNEE_ANGLE': calculate_angle(points['RIGHT_HIP'], points['RIGHT_KNEE'], points['RIGHT_ANKLE']),
+        'LEFT_HIP_ANGLE': calculate_angle(points['LEFT_SHOULDER'], points['LEFT_HIP'], points['LEFT_KNEE']),
+        'RIGHT_HIP_ANGLE': calculate_angle(points['RIGHT_SHOULDER'], points['RIGHT_HIP'], points['RIGHT_KNEE'])
     }
 
-# Bucle para capturar video en tiempo real
-prev = None
+    # Calculate distances
+    features.update({
+        'shoulder_distance': calculate_distance(points['LEFT_SHOULDER'], points['RIGHT_SHOULDER']),
+        'hip_distance': calculate_distance(points['LEFT_HIP'], points['RIGHT_HIP']),
+        'knee_distance': calculate_distance(points['LEFT_KNEE'], points['RIGHT_KNEE']),
+        'ankle_distance': calculate_distance(points['LEFT_ANKLE'], points['RIGHT_ANKLE']),
+        'step_length': calculate_distance(points['LEFT_ANKLE'], points['RIGHT_ANKLE']),
+        'body_height_left': calculate_distance(points['LEFT_SHOULDER'], points['LEFT_ANKLE']),
+        'body_height_right': calculate_distance(points['RIGHT_SHOULDER'], points['RIGHT_ANKLE'])
+    })
+
+    # Calculate center of mass
+    center_x = (points['LEFT_HIP'][0] + points['RIGHT_HIP'][0]) / 2
+    center_y = (points['LEFT_HIP'][1] + points['RIGHT_HIP'][1]) / 2
+    
+    # Calculate body rotation
+    features['body_rotation'] = np.degrees(np.arctan2(
+        points['RIGHT_SHOULDER'][1] - points['LEFT_SHOULDER'][1],
+        points['RIGHT_SHOULDER'][0] - points['LEFT_SHOULDER'][0]
+    ) - np.arctan2(
+        points['RIGHT_HIP'][1] - points['LEFT_HIP'][1],
+        points['RIGHT_HIP'][0] - points['LEFT_HIP'][0]
+    ))
+
+    if prev_values is None:
+        # Initialize velocities and accelerations with zeros
+        features.update({
+            'center_velocity_x': 0, 'center_velocity_y': 0,
+            'center_acceleration_x': 0, 'center_acceleration_y': 0,
+            'LEFT_KNEE_ANGLE_velocity': 0, 'RIGHT_KNEE_ANGLE_velocity': 0,
+            'LEFT_HIP_ANGLE_velocity': 0, 'RIGHT_HIP_ANGLE_velocity': 0,
+            'vertical_displacement': 0, 'vertical_velocity': 0,
+            'vertical_displacement_rolling_mean': 0, 'vertical_displacement_rolling_std': 0,
+            'body_rotation_rolling_mean': features['body_rotation'], 'body_rotation_rolling_std': 0,
+            'step_length_rolling_mean': features['step_length'], 'step_length_rolling_std': 0
+        })
+    else:
+        # Calculate velocities and accelerations
+# Initialize velocities and accelerations with zeros if the keys are missing
+        # Calculate center velocities first
+        features['center_velocity_x'] = (center_x - prev_values.get('center_x', center_x)) / frame_time
+        features['center_velocity_y'] = (center_y - prev_values.get('center_y', center_y)) / frame_time
+
+        # Calculate center accelerations using the newly calculated velocities
+        features['center_acceleration_x'] = (features['center_velocity_x'] - prev_values.get('center_velocity_x', 0)) / frame_time
+        features['center_acceleration_y'] = (features['center_velocity_y'] - prev_values.get('center_velocity_y', 0)) / frame_time
+
+        # Calculate remaining features
+        features.update({
+            'LEFT_KNEE_ANGLE_velocity': (features['LEFT_KNEE_ANGLE'] - prev_values.get('LEFT_KNEE_ANGLE', features['LEFT_KNEE_ANGLE'])) / frame_time,
+            'RIGHT_KNEE_ANGLE_velocity': (features['RIGHT_KNEE_ANGLE'] - prev_values.get('RIGHT_KNEE_ANGLE', features['RIGHT_KNEE_ANGLE'])) / frame_time,
+            'LEFT_HIP_ANGLE_velocity': (features['LEFT_HIP_ANGLE'] - prev_values.get('LEFT_HIP_ANGLE', features['LEFT_HIP_ANGLE'])) / frame_time,
+            'RIGHT_HIP_ANGLE_velocity': (features['RIGHT_HIP_ANGLE'] - prev_values.get('RIGHT_HIP_ANGLE', features['RIGHT_HIP_ANGLE'])) / frame_time,
+            'vertical_displacement': center_y - prev_values.get('center_y', center_y),
+            'vertical_velocity': (center_y - prev_values.get('center_y', center_y)) / frame_time
+        })
+
+
+        
+        # Update rolling statistics (simple moving average for real-time)
+        alpha = 0.2  # Smoothing factor
+        features.update({
+            'vertical_displacement_rolling_mean': alpha * features['vertical_displacement'] + 
+                (1 - alpha) * prev_values['vertical_displacement_rolling_mean'],
+            'vertical_displacement_rolling_std': np.std([features['vertical_displacement'], 
+                prev_values['vertical_displacement_rolling_mean']]),
+            'body_rotation_rolling_mean': alpha * features['body_rotation'] + 
+                (1 - alpha) * prev_values['body_rotation_rolling_mean'],
+            'body_rotation_rolling_std': np.std([features['body_rotation'], 
+                prev_values['body_rotation_rolling_mean']]),
+            'step_length_rolling_mean': alpha * features['step_length'] + 
+                (1 - alpha) * prev_values['step_length_rolling_mean'],
+            'step_length_rolling_std': np.std([features['step_length'], 
+                prev_values['step_length_rolling_mean']])
+        })
+
+    # Store current center values for next frame
+    features.update({
+        'center_x': center_x,
+        'center_y': center_y
+    })
+
+    return features
+
+# Movement labels
+movement_labels = {
+    0: 'Still', 1: 'approach', 2: 'back', 3: 'jump', 
+    4: 'turn_left', 5: 'walk_left', 6: 'turn_right', 
+    7: 'walk_right', 8: 'sit', 9: 'stand'
+}
+
+# Real-time processing loop
+prev_movement = "Still"
+movement_buffer = []  # For smoothing predictions
+buffer_size = 5  # Number of frames to average
+
 while True:
-    # Capturar un frame de la cámara
     ret, frame = cap.read()
     if not ret:
         break
 
-    
-
-    # Convertir a RGB
+    # Convert to RGB for MediaPipe
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    # Detectar los puntos de la pose con MediaPipe
     results = pose.process(frame_rgb)
 
-    # Verificar si se detectaron los puntos
     if results.pose_landmarks:
-        # Calcular las posiciones y ángulos
-        current_values = calcular_posiciones_y_angulos(results.pose_landmarks.landmark)
+        # Extract features
+        landmarks = results.pose_landmarks.landmark
+        features = extract_features(landmarks, prev_values)
+        prev_values = features
 
-        # Calcular los deltas solo para las posiciones
-        deltas = calcular_deltas(list(current_values.values())[:-2], list(prev_values.values())[:-2] if prev_values else None)  # No calculamos delta para los ángulos y shoulder_distance
-        prev_values = current_values  # Actualizar el frame anterior con los valores actuales
-
-        # Convertir los deltas en un dataframe (igual que en el entrenamiento)
-        delta_df = pd.DataFrame([deltas + [current_values["LEFT_KNEE_ANGLE"], current_values["RIGHT_KNEE_ANGLE"]]],
-                                columns=columnas_relevantes)
-
-        # Realizar la predicción con el modelo XGBoost
-        prediction = model.predict(delta_df)
-        movement = prediction[0]
-
-        # Mostrar el resultado
-        movement_dict = {
-            0: 'Still', 1: 'Approach', 2: 'Back', 3: 'Jump', 4: 'Sit', 
-            5: 'Stand', 6: 'Turn Left', 7: 'Turn Right', 8: 'Walk Left', 9: 'Walk Right'
-        }
-        if(movement != 0):
-            prev = movement_dict[movement]
-            cv2.putText(frame, f"Movimiento: {movement_dict[movement]}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        else:
-            cv2.putText(frame, f"Movimiento: {prev}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # Dibujar los puntos clave de los hombros en el frame
-        h, w, c = frame.shape
-        left_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER]
-        right_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        # Prepare features for prediction
+        feature_values = [features[col] for col in feature_columns]
+        feature_df = pd.DataFrame([feature_values], columns=feature_columns)
         
-        # Convertir las coordenadas (x, y) a píxeles
-        left_shoulder_x = int(left_shoulder.x * w)
-        left_shoulder_y = int(left_shoulder.y * h)
-        right_shoulder_x = int(right_shoulder.x * w)
-        right_shoulder_y = int(right_shoulder.y * h)
+        # Scale features
+        scaled_features = scaler.transform(feature_df)
+        
+        # Predict movement
+        prediction = model.predict(scaled_features)[0]
+        movement = movement_labels.get(prediction, 'Unknown')
+        
+        # Smooth predictions using a buffer
+        movement_buffer.append(movement)
+        if len(movement_buffer) > buffer_size:
+            movement_buffer.pop(0)
+        
+        # Get most common movement in buffer
+        if movement != 'Still':
+            prev_movement = movement
+        
+        # Display prediction
+        cv2.putText(frame, f"Movement: {prev_movement}", (50, 50), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        # Dibujar círculos en los puntos relevantes
-        puntos_relevantes = [
-            (left_shoulder_x, left_shoulder_y),
-            (right_shoulder_x, right_shoulder_y),
-            (int(current_values["LEFT_HIP_x"] * w), int(current_values["LEFT_HIP_y"] * h)),
-            (int(current_values["RIGHT_HIP_x"] * w), int(current_values["RIGHT_HIP_y"] * h)),
-            (int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_KNEE].x * w), int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_KNEE].y * h)),
-            (int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_KNEE].x * w), int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_KNEE].y * h)),
-            (int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE].x * w), int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE].y * h)),
-            (int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE].x * w), int(results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE].y * h))
-        ]
+        # Draw skeleton
+        h, w, _ = frame.shape
+        for connection in mp_pose.POSE_CONNECTIONS:
+            start_idx = connection[0]
+            end_idx = connection[1]
+            
+            start_point = (int(landmarks[start_idx].x * w), int(landmarks[start_idx].y * h))
+            end_point = (int(landmarks[end_idx].x * w), int(landmarks[end_idx].y * h))
+            
+            cv2.line(frame, start_point, end_point, (0, 255, 0), 2)
 
-        for punto in puntos_relevantes:
-            cv2.circle(frame, punto, 5, (0, 0, 255), -1)  # Dibujar cada punto relevante en rojo
+        # Draw key points
+        for idx in [
+            mp_pose.PoseLandmark.LEFT_SHOULDER,
+            mp_pose.PoseLandmark.RIGHT_SHOULDER,
+            mp_pose.PoseLandmark.LEFT_HIP,
+            mp_pose.PoseLandmark.RIGHT_HIP,
+            mp_pose.PoseLandmark.LEFT_KNEE,
+            mp_pose.PoseLandmark.RIGHT_KNEE,
+            mp_pose.PoseLandmark.LEFT_ANKLE,
+            mp_pose.PoseLandmark.RIGHT_ANKLE
+        ]:
+            x = int(landmarks[idx].x * w)
+            y = int(landmarks[idx].y * h)
+            cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
 
-    # Mostrar el frame con la predicción y los puntos de los hombros
-    cv2.imshow('Pose Detection', frame)
+    # Show the frame
+    cv2.imshow('Enhanced Motion Detection', frame)
 
-    # Salir del bucle con la tecla 'q'
+    # Exit on 'q'
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Liberar la cámara y cerrar las ventanas
+# Release resources
 cap.release()
 cv2.destroyAllWindows()
