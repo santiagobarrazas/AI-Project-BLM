@@ -25,9 +25,31 @@ for filename in os.listdir(input_folder):
         numeric_columns = df.select_dtypes(include=["number"]).columns
         numeric_columns = numeric_columns.drop("frame", errors="ignore")  # Excluir "frame" si existe
         
-        # Normalizar las columnas numéricas
+        # Normalizar las columnas numéricas si existen
         if not numeric_columns.empty:
-            df[numeric_columns] = scaler.fit_transform(df[numeric_columns])
+            if {"LEFT_HIP_x", "RIGHT_HIP_x", "LEFT_HIP_y", "RIGHT_HIP_y"}.issubset(df.columns):
+                # Calcular el centro de las caderas
+                left_hip_x = df["LEFT_HIP_x"]
+                left_hip_y = df["LEFT_HIP_y"]
+                right_hip_x = df["RIGHT_HIP_x"]
+                right_hip_y = df["RIGHT_HIP_y"]
+
+                hip_center_x = (left_hip_x + right_hip_x) / 2
+                hip_center_y = (left_hip_y + right_hip_y) / 2
+
+                # Normalizar landmarks respecto al centro de las caderas
+                for col in ["x", "y", "z"]:
+                    cols_to_normalize = [f"{landmark}_{col}" for landmark in df.columns if f"_{col}" in landmark]
+                    for normalized_col in cols_to_normalize:
+                        if col == "x":
+                            df[normalized_col] = (df[normalized_col] - hip_center_x) * 100
+                        elif col == "y":
+                            df[normalized_col] = (df[normalized_col] - hip_center_y) * 100
+                        elif col == "z":
+                            df[normalized_col] = df[normalized_col] * 100
+            else:
+                # Normalización estándar con MinMaxScaler
+                df[numeric_columns] = scaler.fit_transform(df[numeric_columns])
         
         # Guardar el archivo normalizado en la carpeta de salida
         df.to_csv(output_path, index=False)
