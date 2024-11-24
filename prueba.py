@@ -18,7 +18,7 @@ pose = mp_pose.Pose(
 )
 
 # Initialize the camera
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 # Store previous frame's values
 prev_values = None
@@ -34,7 +34,9 @@ feature_columns = [
     'vertical_displacement', 'vertical_velocity', 'body_rotation',
     'vertical_displacement_rolling_mean', 'vertical_displacement_rolling_std',
     'body_rotation_rolling_mean', 'body_rotation_rolling_std',
-    'step_length_rolling_mean', 'step_length_rolling_std', 'hand_distance_x'
+    'step_length_rolling_mean', 'step_length_rolling_std', 'hand_distance_x',
+    'knee_hip_distance_left', 'knee_hip_distance_right', 'hip_ankle_distance_left',
+    'hip_ankle_distance_right'
 ]
 
 def calculate_angle(p1, p2, p3):
@@ -87,6 +89,14 @@ def extract_features(landmarks, prev_values, frame_time=0.033):
         'body_height_right': calculate_distance(points['RIGHT_SHOULDER'], points['RIGHT_ANKLE'])
     })
 
+    # Calculate knee to hip distance
+    features['knee_hip_distance_left'] = points['LEFT_KNEE'][1] - points['LEFT_HIP'][1]
+    features['knee_hip_distance_right'] = points['RIGHT_KNEE'][1] - points['RIGHT_HIP'][1]
+    
+    features['hip_ankle_distance_left'] = points['LEFT_HIP'][1] - points['LEFT_ANKLE'][1]
+    features['hip_ankle_distance_right'] = points['RIGHT_HIP'][1] - points['RIGHT_ANKLE'][1]
+    
+
     # Calculate center of mass
     center_x = (points['LEFT_HIP'][0] + points['RIGHT_HIP'][0]) / 2
     center_y = (points['LEFT_HIP'][1] + points['RIGHT_HIP'][1]) / 2
@@ -111,7 +121,7 @@ def extract_features(landmarks, prev_values, frame_time=0.033):
             'vertical_displacement_rolling_mean': 0, 'vertical_displacement_rolling_std': 0,
             'body_rotation_rolling_mean': features['body_rotation'], 'body_rotation_rolling_std': 0,
             'step_length_rolling_mean': features['step_length'], 'step_length_rolling_std': 0,
-            'hand_distance_x': 0,
+            'hand_distance_x': 0
         })
     else:
         # Calculate velocities and accelerations
