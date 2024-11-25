@@ -18,7 +18,7 @@ pose = mp_pose.Pose(
 )
 
 # Initialize the camera
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 # Store previous frame's values
 prev_values = None
@@ -223,6 +223,13 @@ while True:
         # Display prediction
         cv2.putText(frame, f"Movement: {prev_movement}", (50, 50), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        cv2.putText(frame, f"Left Knee Angle: {features['LEFT_KNEE_ANGLE']:.2f}", (50, 100), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        cv2.putText(frame, f"Right Knee Angle: {features['RIGHT_KNEE_ANGLE']:.2f}", (50, 120),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        cv2.putText(frame, f"Shoulder Distance: {features['shoulder_distance']:.2f}", (50, 140),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
         # Draw skeleton
         h, w, _ = frame.shape
