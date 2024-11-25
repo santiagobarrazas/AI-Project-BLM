@@ -5,6 +5,6 @@ En caso de tener otro sistema operativo deberá ejecutar data_capture.py manualm
 
 -  cv2 (opencv-python)
 -  mediapipe
--  numoy
+-  numpy
 -  pickle
 -  pandas
