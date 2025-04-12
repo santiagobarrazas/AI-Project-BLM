@@ -1,1 +1,7 @@
 *.ipynb linguist-generated
+*.csv linguist-generated
+*.json linguist-generated
+*.xml linguist-generated
+*.html linguist-generated
+*.log linguist-generated
+*.txt linguist-generated
