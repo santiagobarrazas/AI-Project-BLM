@@ -24,4 +24,4 @@ Hemos creado un video explicativo del proyecto para describir el flujo de trabaj
 
 ## Ubicación del Informe Completo
 
-El informe técnico completo, que detalla la metodología, resultados y conclusiones del proyecto, se encuentra disponible en la carpeta `docs` del repositorio.
+El informe técnico completo, que detalla la metodología, resultados y conclusiones del proyecto, se encuentra disponible en la carpeta `docs` del repositorio, entre si desea ver más detalles.
